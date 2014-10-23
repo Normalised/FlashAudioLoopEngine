@@ -13,8 +13,8 @@ import flash.utils.getTimer;
 
 public class MixEngine extends EventDispatcher {
 
-    public var channels:Vector.<AudioLoop>;
-    public var enabled:Vector.<Boolean>;
+    public var channels:Array;
+    public var enabled:Vector.<int>;
 
     private var left:Vector.<Number>;
     private var right:Vector.<Number>;
@@ -36,8 +36,8 @@ public class MixEngine extends EventDispatcher {
 
     public function MixEngine() {
         super(this);
-        channels = new Vector.<AudioLoop>();
-        enabled = new Vector.<Boolean>();
+        channels = [];
+        enabled = new Vector.<int>();
         left = new Vector.<Number>(4096,true);
         right = new Vector.<Number>(4096,true);
         zeros = [];
@@ -88,6 +88,7 @@ public class MixEngine extends EventDispatcher {
                 channels[i].write(left, right, bufferSize);
             }
         }
+        var t1:int = getTimer();
         // Write mixed audio into sample data byte array
         for (var j:int = 0; j < bufferSize; j++) {
             event.data.writeFloat(left[j]);
@@ -97,6 +98,7 @@ public class MixEngine extends EventDispatcher {
 
         lastUpdateTime = getTimer();
 //        trace("Latency " + latency + ". Mix Time " + (lastUpdateTime - t));
+        trace("T1 " + (t1 - t));
     }
 
     /**
@@ -121,7 +123,7 @@ public class MixEngine extends EventDispatcher {
     }
 
     public function channelSwitch(index:int, on:Boolean):void {
-        enabled[index] = on && channels[index].ready;
+        enabled[index] = (on && channels[index].ready) ? 1 : 0;
         if(enabled[index]) {
             channels[index].syncTo(position, true);
         }
