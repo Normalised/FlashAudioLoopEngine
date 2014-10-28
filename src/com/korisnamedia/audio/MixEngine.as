@@ -53,6 +53,7 @@ public class MixEngine extends EventDispatcher {
     }
 
     public function start():void {
+        if(playing) return;
         trace("Start mix engine with " + numChannels + " channels");
         playing = true;
         lastUpdateTime = getTimer();
