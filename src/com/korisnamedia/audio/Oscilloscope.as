@@ -17,13 +17,17 @@ public class Oscilloscope extends Sprite {
     }
 
     // Render mono data, i.e. 4 bytes per sample
-    public function render(data:ByteArray):void {
+    public function render(loop:AudioLoop, position:int, length:int):void {
         graphics.clear();
         graphics.lineStyle(0, 0x000000);
         graphics.moveTo(0, 0);
-        var nPitch:Number = _width / data.length;
-        while(data.bytesAvailable)
-            graphics.lineTo(data.position * nPitch, data.readFloat() * _height * 0.5);
+        var nPitch:Number = _width / length;
+        var readPos:int = position;
+        for (var i:int = 0; i < length; i++) {
+            readPos = (position + i) % loop.numSamples;
+            var number:Number = loop.leftChannel[readPos];
+            graphics.lineTo(i * nPitch, loop.leftChannel[readPos] * _height * 0.5);
         }
     }
+}
 }

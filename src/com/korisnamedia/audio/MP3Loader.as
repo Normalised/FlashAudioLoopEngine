@@ -7,6 +7,7 @@ package com.korisnamedia.audio {
 import flash.events.Event;
 import flash.events.EventDispatcher;
 import flash.events.IOErrorEvent;
+import flash.events.ProgressEvent;
 import flash.events.SampleDataEvent;
 import flash.media.Sound;
 import flash.media.SoundChannel;
@@ -38,22 +39,27 @@ public class MP3Loader extends EventDispatcher {
         super(this);
         this.id = id;
         encoderOffset = offset;
-        sample = new AudioLoop();
         this.tempo = tempo;
+        sample = new AudioLoop(tempo);
     }
 
     public function loadMp3(mp3Url:String):void {
         url = mp3Url;
         mp3.addEventListener(Event.COMPLETE, mp3Complete);
         mp3.addEventListener(IOErrorEvent.IO_ERROR, mp3Error);
+        mp3.addEventListener(ProgressEvent.PROGRESS, loadProgress);
         mp3.load(new URLRequest(url));
+    }
+
+    private function loadProgress(event:ProgressEvent):void {
+        dispatchEvent(event.clone());
     }
 
     private function mp3Complete(event:Event):void {
         trace("MP3 Loaded " + url);
         loaded = true;
         trace("Extracting all audio. Total mp3 length : " + mp3.length);
-        sample.fromMP3(mp3, encoderOffset, tempo);
+        sample.fromMP3(mp3, encoderOffset);
 
         dispatchEvent(new Event(Event.COMPLETE));
     }

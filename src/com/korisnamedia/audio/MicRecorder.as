@@ -13,12 +13,17 @@ import flash.media.Microphone;
 public class MicRecorder extends EventDispatcher {
     private var mic:Microphone;
     private var DELAY_LENGTH:int = 4000;
-    public var sampleData:Vector.<Number>;
-
-    // Default 2 seconds recording
-    public var recordTimeInSamples:int = 88200;
-    private var recording:Boolean;
-    private var _scope:Oscilloscope;
+    public var recording:Boolean;
+    private var _audioBuffer:AudioLoop;
+    public var writePos:int = 0;
+    private var audioBufferState:Boolean;
+    private var audioBufferSize:int;
+    private var writeOffset:int = 0;
+    private var waitForSync:Boolean;
+    private var syncTime:int;
+    private var l:Vector.<Number>;
+    private var r:Vector.<Number>;
+    private var latency:int = 4000 * 5;
 
     public function MicRecorder() {
         mic = Microphone.getMicrophone();
@@ -34,35 +39,68 @@ public class MicRecorder extends EventDispatcher {
         mic.addEventListener(SampleDataEvent.SAMPLE_DATA, micSampleDataHandler);
     }
 
-    public function set scope(s:Oscilloscope):void {
-        _scope = s;
-    }
-
-    public function record():void {
-        trace("Record");
-        sampleData = new Vector.<Number>();
+    public function record(bufferPosition:int):void {
+        trace("Record " + bufferPosition);
+        syncTime = bufferPosition - latency;
+        writePos = 0;
+        audioBufferState = audioBuffer.active;
+        audioBuffer.active = false;
+        waitForSync = true;
         recording = true;
     }
 
     private function micSampleDataHandler(event:SampleDataEvent):void {
-        var pos:int = event.data.position;
+        var data = event.data;
         if(recording) {
-            while (event.data.bytesAvailable) {
-                sampleData.push(event.data.readFloat());
+            var numSamples:int = data.bytesAvailable / 4;
+            var i:int = 0;
+            var p:int = 0;
+            if(waitForSync) {
+                if(syncTime + numSamples > 0) {
+                    trace("Crossing sync boundary : " + syncTime + " : " + numSamples);
+                    // pull the sync data
+                    var st:int = Math.abs(syncTime);
+                    for(i=0;i<st;i++) {
+                        data.readFloat();
+                    }
+                    // write the rest
+                    for(;i<numSamples;i++) {
+                        r[p] = l[p] = data.readFloat();
+                        p++;
+                    }
+                    writePos = p;
+                    waitForSync = false;
+                    if(data.bytesAvailable > 0) {
+                        trace("ERROR : Not all data consumed");
+                    }
+                } else {
+                    // pull all the data
+                    while(data.bytesAvailable) {
+                        data.readFloat();
+                    }
+                }
+                syncTime += numSamples;
+                return;
             }
-            if (sampleData.length >= recordTimeInSamples) {
+
+            for(i;i<numSamples;i++) {
+                p = (writePos + i) % audioBufferSize;
+                r[p] = l[p] = data.readFloat();
+            }
+            writePos += numSamples;
+
+            if (writePos >= audioBufferSize) {
+                trace("Write pos past buffer size");
+                _audioBuffer.active = true;
                 stopRecording();
             }
-        }
-        if(_scope) {
-            event.data.position = pos;
-            _scope.render(event.data);
+            writePos %= audioBufferSize;
         }
     }
 
     private function stopRecording():void {
         recording = false;
-        trace("Record time complete. Samples : " + sampleData.length);
+        trace("Record time complete. Samples");
 //        mic.removeEventListener(SampleDataEvent.SAMPLE_DATA, micSampleDataHandler);
         dispatchEvent(new Event(Event.COMPLETE));
     }
@@ -74,6 +112,23 @@ public class MicRecorder extends EventDispatcher {
         else if (event.code == "Microphone.Muted") {
             trace("Microphone access was denied.");
         }
+    }
+
+    public function stop():void {
+        trace("Stop Recording");
+        stopRecording();
+    }
+
+    public function set audioBuffer(audioBuffer:AudioLoop):void {
+        _audioBuffer = audioBuffer;
+        audioBufferSize = audioBuffer.numSamples;
+        l = audioBuffer.leftChannel;
+        r = audioBuffer.rightChannel;
+
+    }
+
+    public function get audioBuffer():AudioLoop {
+        return _audioBuffer;
     }
 }
 }

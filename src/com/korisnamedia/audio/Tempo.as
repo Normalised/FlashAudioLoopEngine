@@ -12,6 +12,7 @@ public class Tempo {
     public var samplesPerBar:Number;
     public var timePerBeat:Number;
     public var timePerBar:Number;
+    public var samplesPerBarInverse:Number;
 
     public function Tempo(bpm:Number) {
         _bpm = bpm;
@@ -32,7 +33,12 @@ public class Tempo {
         timePerBar = timePerBeat * beatsPerBar;
         samplesPerBeat = timePerBeat * 44.1;
         samplesPerBar = samplesPerBeat * beatsPerBar;
+        samplesPerBarInverse = 1 / samplesPerBar;
         trace("Tempo. TPBt : " + timePerBeat + ". SPBt : " + samplesPerBeat);
+    }
+
+    public function secondsToBars(seconds:Number):Number {
+        return (seconds * 1000) / timePerBar;
     }
 }
 }
