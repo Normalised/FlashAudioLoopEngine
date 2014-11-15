@@ -50,6 +50,7 @@ public class MixEngine extends EventDispatcher {
 
     private static const log:ILogger = getLogger(MixEngine);
     private var stopFlag:Boolean = false;
+    public var muted:Boolean = false;
 
     public function MixEngine() {
         super(this);
@@ -249,6 +250,11 @@ public class MixEngine extends EventDispatcher {
             tc += a.active ? 1 : 0;
         }
         return tc;
+    }
+
+    public function toggleMute():void {
+        muted = !muted;
+        gain = muted ? 0.0 : 1.0;
     }
 }
 }
