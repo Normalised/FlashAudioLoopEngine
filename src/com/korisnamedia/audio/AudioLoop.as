@@ -6,12 +6,17 @@
 package com.korisnamedia.audio {
 import com.korisnamedia.audio.filters.IFilter;
 
+import flash.events.EventDispatcher;
+
 import flash.media.Sound;
 import flash.profiler.showRedrawRegions;
 import flash.utils.ByteArray;
 import flash.utils.getTimer;
 
-public class AudioLoop {
+import org.as3commons.logging.api.ILogger;
+import org.as3commons.logging.api.getLogger;
+
+public class AudioLoop extends EventDispatcher {
 
     private var _loopEnd:int = 0;
     private var _loopStart:int = 0;
@@ -47,9 +52,13 @@ public class AudioLoop {
     public var filters:Vector.<IFilter>;
     private var tempo:Tempo;
     public var active:Boolean = false;
+
+    public var loopLengthInMsInverse:Number;
     private var inverseSampleRateKHz:Number;
 
     public var gain:Number = 1.0;
+    private static const log:ILogger = getLogger(AudioLoop);
+    public var ending:Boolean = false;
 
     public function AudioLoop(tempo:Tempo) {
         this.tempo = tempo;
@@ -61,13 +70,13 @@ public class AudioLoop {
      * Create an empty loop
      * @param size  number of bars
      */
-    public function empty(numBars:int):void {
-        numSamples = numBars * tempo.samplesPerBar;
+    public function empty(numSamples:int):void {
+        this.numSamples = numSamples;
         extractSamples();
     }
 
     public function copy(left:Vector.<Number>, right:Vector.<Number> = null, offset:int = 0):void {
-        trace("Copy audio : " + left.length);
+        log.debug("Copy audio : " + left.length);
         if(right && right.length > left.length) {
             numSamples = left.length - offset;
         } else {
@@ -88,16 +97,29 @@ public class AudioLoop {
         ready = true;
     }
 
+    public function replace(audio:Vector.<Number>):void {
+        var writePos:int = _loopStart;
+        for (var i:int = 0; i < audio.length; i++) {
+            writePos = _loopStart + i;
+            rightChannel[writePos] = leftChannel[writePos] = audio[i];
+        }
+        _loopEnd = _loopStart + audio.length;
+        var numBeats:Number = Math.floor(audio.length / tempo.samplesPerBeat);
+        _bars = Math.floor(numBeats / 4);
+        log.debug("Replaced audio with " + numBeats + " beats := " + _bars + " bars.");
+        updateLoopLength();
+    }
+
     public function fromMP3(mp3:Sound, offset:int):void {
         var t:int = getTimer();
         var samplesTotal:int = Math.floor(mp3.length * 44.1);
-        trace("Num samples : " + samplesTotal);
+        log.debug("Num samples : " + samplesTotal);
         var buffer:ByteArray = new ByteArray();
         mp3.extract(buffer, samplesTotal, offset);
         var t2:int = getTimer();
-        trace("Extract took " + (t2 - t));
+        log.debug("Extract took " + (t2 - t));
 
-        trace("Audio buffer samples available : " + (buffer.bytesAvailable / 8));
+        log.debug("Audio buffer samples available : " + (buffer.bytesAvailable / 8));
 
         buffer.position = 0;
         numSamples = buffer.bytesAvailable / 8;
@@ -108,7 +130,7 @@ public class AudioLoop {
         leftChannel = new Vector.<Number>(numSamples, true);
         rightChannel = new Vector.<Number>(numSamples, true);
 
-        trace("Num samples : " + numSamples);
+        log.debug("Num samples : " + numSamples);
         for (var i:int = 0; i < numSamples; i++) {
             if(buffer) {
                 leftChannel[i] = buffer.readFloat();
@@ -120,12 +142,12 @@ public class AudioLoop {
         }
 
         if(!_loopEnd) {
-            trace("Set loop end from BPM");
+            log.debug("Set loop end from BPM");
             var numBeats:Number = Math.floor(numSamples / tempo.samplesPerBeat);
             _bars = Math.floor(numBeats / 4);
             samplesPerBar = tempo.samplesPerBeat * 4;
             _loopEnd = _bars * samplesPerBar;
-            trace("Num beats : " + numBeats + ". Bars : " + bars + ". Loop end : " + _loopEnd);
+            log.debug("Num beats : " + numBeats + ". Bars : " + bars + ". Loop end : " + _loopEnd);
         }
         updateLoopLength();
         ready = true;
@@ -133,10 +155,13 @@ public class AudioLoop {
 
     private function checkLoopStart():void {
         _loopLength = _loopEnd - _loopStart;
+        log.debug("Check loop start. Start : " + _loopStart + ". End : " + _loopEnd + ". Length " + _loopLength);
         if(_loopStart > (_loopEnd - minimumLoopLength)) {
             _loopStart = _loopEnd - minimumLoopLength;
+            log.debug("Moved start to end - min length : " + _loopStart);
         }
         if(_loopStart < 0) {
+            log.debug("Start < 0. Set to 0");
             _loopStart = 0;
         }
         updateLoopLength();
@@ -146,7 +171,8 @@ public class AudioLoop {
         _loopLength = _loopEnd - _loopStart;
         samplesPerBar = _loopLength / _bars;
         _loopLengthInMilliseconds = _loopLength / 44.1;
-        trace("Loop start is " + (_loopStart) + ". Length is " + ((_loopEnd - _loopStart)));
+        loopLengthInMsInverse = 1 / _loopLengthInMilliseconds;
+        log.debug("Loop start is " + (_loopStart) + ". Length is " + ((_loopEnd - _loopStart)));
     }
 
     private function checkLoopEnd():void {
@@ -156,10 +182,11 @@ public class AudioLoop {
         }
         if(numSamples) {
             if(_loopEnd > numSamples) {
+                log.debug("Loop end > numSamples. end : " + _loopEnd + ". numSamples : " + numSamples);
                 _loopEnd = numSamples;
             }
         } else {
-            trace("Num samples not set yet");
+            log.debug("Num samples not set yet");
         }
         updateLoopLength();
     }
@@ -168,9 +195,16 @@ public class AudioLoop {
         return _loopStart;
     }
 
-    public function set loopStart(start:int):void {
+    public function setLoopStart(start:int, moveEnd:Boolean = true):void {
+
+        var ds:int = (start - _loopStart);
         _loopStart = start;
+
         checkLoopStart();
+        if(moveEnd) {
+            _loopEnd += ds;
+            checkLoopEnd();
+        }
     }
 
     public function get loopEnd():Number {
@@ -208,7 +242,7 @@ public class AudioLoop {
         if(loopLength < minimumLoopLength) {
             loopLength = minimumLoopLength;
         }
-        if(_loopStart + loopLength <= (numSamples - _loopStart)) {
+        if(_loopStart + loopLength <= numSamples) {
             _loopEnd = _loopStart + loopLength;
         } else {
             _loopEnd = numSamples - _loopStart;
@@ -244,6 +278,7 @@ public class AudioLoop {
         var endPos:int = sampleCount;
         var placeInBar:int;
         var endPlaceInBar:int;
+        ending = false;
 
         // If we're waiting to start when we hit a bar boundary
         if(waitForQuantizedSync) {
@@ -280,6 +315,7 @@ public class AudioLoop {
                 _fillToSyncBoundary = false;
                 active = false;
                 pendingStateChange = 0;
+                ending = true;
             }
         }
 
@@ -321,19 +357,19 @@ public class AudioLoop {
      */
     public function start(sampleReadPosition:int, waitForQ:Boolean = false):void {
         if(_fillToSyncBoundary) {
-            trace("Cancel stop");
+            log.debug("Cancel stop");
             // Cancel the stop
             _fillToSyncBoundary = false;
         }
         readPosition = sampleReadPosition % _loopLength;
-        trace("start. SRP : " + sampleReadPosition + ". RP: " + readPosition);
+        log.debug("start. SRP : " + sampleReadPosition + ". RP: " + readPosition);
         waitForQuantizedSync = waitForQ;
         active = true;
         pendingStateChange = waitForQuantizedSync ? STARTING : 0;
     }
 
     public function stop():void {
-        trace("Fill to sync boundary. WaitForQ : " + waitForQuantizedSync);
+        log.debug("Fill to sync boundary. WaitForQ : " + waitForQuantizedSync);
         if(waitForQuantizedSync) {
             // Previous start trigger should be cancelled
             waitForQuantizedSync = false;
@@ -352,7 +388,7 @@ public class AudioLoop {
     public function set bars(value:int):void {
         _bars = value;
         if(!_loopLength) {
-            trace("ERROR : Loop Length isnt set")
+            log.debug("ERROR : Loop Length isnt set")
         } else {
             samplesPerBar = _loopLength / _bars;
         }
@@ -386,5 +422,6 @@ public class AudioLoop {
     public function unmute():void {
         gain = 1;
     }
+
 }
 }

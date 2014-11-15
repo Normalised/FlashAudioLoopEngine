@@ -16,6 +16,10 @@ import flash.net.URLRequest;
 import flash.utils.ByteArray;
 import flash.utils.getTimer;
 
+import org.as3commons.logging.api.ILogger;
+
+import org.as3commons.logging.api.getLogger;
+
 public class MP3Loader extends EventDispatcher {
 
     private var url:String;
@@ -33,6 +37,8 @@ public class MP3Loader extends EventDispatcher {
     public var sample:AudioLoop;
     private var encoderOffset:int;
     private var tempo:Tempo;
+
+    private static const log:ILogger = getLogger(MP3Loader);
 
     public function MP3Loader(id:int, offset:int, tempo:Tempo) {
 
@@ -56,16 +62,16 @@ public class MP3Loader extends EventDispatcher {
     }
 
     private function mp3Complete(event:Event):void {
-        trace("MP3 Loaded " + url);
+        log.debug("MP3 Loaded " + url);
         loaded = true;
-        trace("Extracting all audio. Total mp3 length : " + mp3.length);
+        log.debug("Extracting all audio. Total mp3 length : " + mp3.length);
         sample.fromMP3(mp3, encoderOffset);
 
         dispatchEvent(new Event(Event.COMPLETE));
     }
 
     private function mp3Error(event:IOErrorEvent):void {
-        trace(event);
+        log.error(event);
     }
 
 }

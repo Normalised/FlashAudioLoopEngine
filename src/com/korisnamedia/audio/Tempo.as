@@ -4,6 +4,9 @@
  * Time: 3:08 PM
  */
 package com.korisnamedia.audio {
+import org.as3commons.logging.api.ILogger;
+import org.as3commons.logging.api.getLogger;
+
 public class Tempo {
 
     private var _bpm:Number;
@@ -14,6 +17,7 @@ public class Tempo {
     public var timePerBar:Number;
     public var samplesPerBarInverse:Number;
 
+    private static const log:ILogger = getLogger(Tempo);
     public function Tempo(bpm:Number) {
         _bpm = bpm;
         updateValues();
@@ -34,7 +38,7 @@ public class Tempo {
         samplesPerBeat = timePerBeat * 44.1;
         samplesPerBar = samplesPerBeat * beatsPerBar;
         samplesPerBarInverse = 1 / samplesPerBar;
-        trace("Tempo. TPBt : " + timePerBeat + ". SPBt : " + samplesPerBeat);
+        log.debug("Tempo. TPBt : " + timePerBeat + ". SPBt : " + samplesPerBeat);
     }
 
     public function secondsToBars(seconds:Number):Number {

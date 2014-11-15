@@ -9,6 +9,10 @@ import flash.events.EventDispatcher;
 import flash.events.SampleDataEvent;
 import flash.events.StatusEvent;
 import flash.media.Microphone;
+import flash.utils.describeType;
+
+import org.as3commons.logging.api.ILogger;
+import org.as3commons.logging.api.getLogger;
 
 public class MicRecorder extends EventDispatcher {
     private var mic:Microphone;
@@ -18,14 +22,18 @@ public class MicRecorder extends EventDispatcher {
     public var writePos:int = 0;
     private var audioBufferState:Boolean;
     private var audioBufferSize:int;
-    private var writeOffset:int = 0;
     private var waitForSync:Boolean;
     private var syncTime:int;
     private var l:Vector.<Number>;
     private var r:Vector.<Number>;
-    private var latency:int = 4000 * 5;
+    private var tempo:Tempo;
+    private var writePosToStopAt:int;
 
-    public function MicRecorder() {
+    private static const log:ILogger = getLogger(MicRecorder);
+
+    public function MicRecorder(tempo:Tempo) {
+
+        this.tempo = tempo;
         mic = Microphone.getMicrophone();
         mic.addEventListener(StatusEvent.STATUS, this.onMicStatus);
         recording = false;
@@ -40,11 +48,13 @@ public class MicRecorder extends EventDispatcher {
     }
 
     public function record(bufferPosition:int):void {
-        trace("Record " + bufferPosition);
-        syncTime = bufferPosition - latency;
+        log.debug("Record. Buffer pos : " + bufferPosition);
+        syncTime = bufferPosition;
         writePos = 0;
         audioBufferState = audioBuffer.active;
         audioBuffer.active = false;
+        writePosToStopAt = audioBufferSize;
+        log.debug("Write Pos to stop at : " + writePosToStopAt);
         waitForSync = true;
         recording = true;
     }
@@ -57,7 +67,7 @@ public class MicRecorder extends EventDispatcher {
             var p:int = 0;
             if(waitForSync) {
                 if(syncTime + numSamples > 0) {
-                    trace("Crossing sync boundary : " + syncTime + " : " + numSamples);
+                    log.debug("Crossing sync boundary : " + syncTime + " : " + numSamples);
                     // pull the sync data
                     var st:int = Math.abs(syncTime);
                     for(i=0;i<st;i++) {
@@ -71,7 +81,7 @@ public class MicRecorder extends EventDispatcher {
                     writePos = p;
                     waitForSync = false;
                     if(data.bytesAvailable > 0) {
-                        trace("ERROR : Not all data consumed");
+                        log.debug("ERROR : Not all data consumed");
                     }
                 } else {
                     // pull all the data
@@ -89,8 +99,9 @@ public class MicRecorder extends EventDispatcher {
             }
             writePos += numSamples;
 
-            if (writePos >= audioBufferSize) {
-                trace("Write pos past buffer size");
+            if (writePos >= writePosToStopAt) {
+                log.debug("Write pos past buffer size");
+                _audioBuffer.loopLength = writePosToStopAt;
                 _audioBuffer.active = true;
                 stopRecording();
             }
@@ -100,28 +111,53 @@ public class MicRecorder extends EventDispatcher {
 
     private function stopRecording():void {
         recording = false;
-        trace("Record time complete. Samples");
-//        mic.removeEventListener(SampleDataEvent.SAMPLE_DATA, micSampleDataHandler);
+        log.debug("Record time complete.");
         dispatchEvent(new Event(Event.COMPLETE));
     }
 
     private function onMicStatus(event:StatusEvent):void {
         if (event.code == "Microphone.Unmuted") {
-            trace("Microphone access was allowed.");
+            log.debug("Microphone access was allowed.");
         }
         else if (event.code == "Microphone.Muted") {
-            trace("Microphone access was denied.");
+            log.debug("Microphone access was denied.");
         }
     }
 
     public function stop():void {
-        trace("Stop Recording");
-        stopRecording();
+        log.debug("Mic Recorder stop. Recording : " + recording);
+        if(recording) {
+            log.debug("Stop Recording. Wait for sync " + waitForSync);
+            if(waitForSync) {
+                waitForSync = false;
+                stopRecording();
+            } else {
+                log.debug("Stop at next boundary");
+                // stop recording at next boundary
+                var beatPos:Number = writePos / tempo.samplesPerBeat;
+                log.debug("Beat Pos : " + beatPos);
+                var barBoundary:int = 1;
+                // Suitable bar boundaries 1, 2, 4 and 8
+                // i.e. 4, 8, 16 and 32 beats
+                if(beatPos < 4) {
+                    barBoundary = 1;
+                } else if(beatPos < 8) {
+                    barBoundary = 2;
+                } else if(beatPos < 16) {
+                    barBoundary = 4;
+                } else {
+                    barBoundary = 8;
+                }
+                writePosToStopAt = barBoundary * tempo.samplesPerBar;
+                log.debug("Bar boundary : " + barBoundary + ". Samples to stop at : " + writePosToStopAt);
+            }
+        }
     }
 
     public function set audioBuffer(audioBuffer:AudioLoop):void {
         _audioBuffer = audioBuffer;
         audioBufferSize = audioBuffer.numSamples;
+        writePosToStopAt = audioBufferSize;
         l = audioBuffer.leftChannel;
         r = audioBuffer.rightChannel;
 
