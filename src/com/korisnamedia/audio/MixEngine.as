@@ -41,7 +41,7 @@ public class MixEngine extends EventDispatcher {
     public var sequencePosition:Number;
     private var updateTimer:Timer;
     public var gain:Number = 1.0;
-    public var latencyAdjustSequencePosition:Number;
+    public var latencyAdjustSequencePosition:Number = 0;
     private var preRolling:Boolean;
 
     public var playing:Boolean = false;
