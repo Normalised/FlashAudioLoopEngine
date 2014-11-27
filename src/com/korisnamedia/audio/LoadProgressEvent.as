@@ -15,8 +15,7 @@ public class LoadProgressEvent extends Event {
     }
 
     override public function clone():Event {
-        var lpe = new LoadProgressEvent(progress);
-        return lpe;
+        return new LoadProgressEvent(progress);
     }
  }
 }

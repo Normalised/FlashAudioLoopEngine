@@ -9,7 +9,6 @@ import com.korisnamedia.audio.filters.IFilter;
 import flash.events.EventDispatcher;
 
 import flash.media.Sound;
-import flash.profiler.showRedrawRegions;
 import flash.utils.ByteArray;
 import flash.utils.getTimer;
 
@@ -23,7 +22,7 @@ public class AudioLoop extends EventDispatcher {
     private var _loopLength:int = 0;
 
     // Where in the loop to read from. Between 0 and _loopLength
-    public var readPosition:int = 0;
+    public var bufferReadPosition:int = 0;
 
     public var leftChannel:Vector.<Number>;
     public var rightChannel:Vector.<Number>;
@@ -43,7 +42,7 @@ public class AudioLoop extends EventDispatcher {
     public static const STARTING:int = 1;
     public static const STOPPING:int = 2;
 
-    private var waitForQuantizedSync:Boolean = false;
+    public var waitForQuantizedSync:Boolean = false;
     private var _fillToSyncBoundary:Boolean = false;
     private var samplesPerBar:Number;
 
@@ -59,6 +58,7 @@ public class AudioLoop extends EventDispatcher {
     public var gain:Number = 1.0;
     private static const log:ILogger = getLogger(AudioLoop);
     public var ending:Boolean = false;
+    private var _stateChangeHandler:Function;
 
     public function AudioLoop(tempo:Tempo) {
         this.tempo = tempo;
@@ -72,7 +72,13 @@ public class AudioLoop extends EventDispatcher {
      */
     public function empty(numSamples:int):void {
         this.numSamples = numSamples;
-        extractSamples();
+        if(leftChannel != null) {
+            for (var i:int = 0; i < leftChannel.length; i++) {
+                leftChannel[i] = rightChannel[i] = 0.0;
+            }
+        } else {
+            extractSamples();
+        }
     }
 
     public function copy(left:Vector.<Number>, right:Vector.<Number> = null, offset:int = 0):void {
@@ -111,9 +117,10 @@ public class AudioLoop extends EventDispatcher {
     }
 
     public function fromMP3(mp3:Sound, offset:int):void {
+
         var t:int = getTimer();
         var samplesTotal:int = Math.floor(mp3.length * 44.1);
-        log.debug("Num samples : " + samplesTotal);
+        log.debug("Samples Total : " + samplesTotal);
         var buffer:ByteArray = new ByteArray();
         mp3.extract(buffer, samplesTotal, offset);
         var t2:int = getTimer();
@@ -239,15 +246,21 @@ public class AudioLoop extends EventDispatcher {
      * @param loopLength    Loop length in samples
      */
     public function set loopLength(loopLength:int):void {
+        log.debug("Set loop length : " + loopLength);
         if(loopLength < minimumLoopLength) {
             loopLength = minimumLoopLength;
         }
         if(_loopStart + loopLength <= numSamples) {
+            log.debug("Loop fits");
             _loopEnd = _loopStart + loopLength;
         } else {
-            _loopEnd = numSamples - _loopStart;
+            _loopEnd = numSamples;
+            _loopStart = numSamples - loopLength;
+            log.debug("Loop doesnt fit, moving loop start earlier");
         }
+
         updateLoopLength();
+        log.debug("Loop updated. Start : " + _loopStart + ". End : " + _loopEnd + " : " + _loopLength + ". Num Samples : " + numSamples);
     }
 
     /**
@@ -258,14 +271,14 @@ public class AudioLoop extends EventDispatcher {
      * @param sampleCount
      */
     public function writePartial(left:Vector.<Number>,right:Vector.<Number>, offset:int, sampleCount:int):void {
-        var readOffset:int = readPosition + _loopStart;
+        var readOffset:int = bufferReadPosition + _loopStart;
         var sampleIndex:int = 0;
         for(var i:int=0;i<sampleCount;i++) {
             sampleIndex = (readOffset + i) % _loopLength;
             left[i + offset] += leftChannel[sampleIndex];
             right[i + offset] += rightChannel[sampleIndex];
         }
-        readPosition = (readPosition + sampleCount) % _loopLength;
+        bufferReadPosition = (bufferReadPosition + sampleCount) % _loopLength;
     }
     /**
      * Dest is vector of interleaved samples
@@ -282,13 +295,14 @@ public class AudioLoop extends EventDispatcher {
 
         // If we're waiting to start when we hit a bar boundary
         if(waitForQuantizedSync) {
-            if(readPosition == 0) {
+            if(bufferReadPosition == 0) {
                 waitForQuantizedSync = false;
+                _stateChangeHandler(0, pendingStateChange);
                 pendingStateChange = 0;
             } else {
                 // Check if there is a boundary between readPosition and (readPosition + sampleCount)
-                placeInBar = readPosition % samplesPerBar;
-                endPlaceInBar = (readPosition + sampleCount) % samplesPerBar;
+                placeInBar = bufferReadPosition % samplesPerBar;
+                endPlaceInBar = (bufferReadPosition + sampleCount) % samplesPerBar;
                 //trace("Wait for quantized sync " + placeInBar + " : " + endPlaceInBar);
 
                 if(endPlaceInBar < placeInBar) {
@@ -296,6 +310,7 @@ public class AudioLoop extends EventDispatcher {
                     // and turn off waitingForQuantizedSync
                     startPos = samplesPerBar - placeInBar;
                     waitForQuantizedSync = false;
+                    _stateChangeHandler(0, pendingStateChange);
                     pendingStateChange = 0;
                 } else {
                     // Jump to the end
@@ -304,8 +319,8 @@ public class AudioLoop extends EventDispatcher {
             }
         } else if(_fillToSyncBoundary) {
             // fill only to end of a bar then stop
-            placeInBar = readPosition % samplesPerBar;
-            endPlaceInBar = (readPosition + sampleCount) % samplesPerBar;
+            placeInBar = bufferReadPosition % samplesPerBar;
+            endPlaceInBar = (bufferReadPosition + sampleCount) % samplesPerBar;
 //            trace("Wait for quantized sync " + placeInBar + " : " + endPlaceInBar);
 
             if(endPlaceInBar < placeInBar) {
@@ -314,6 +329,7 @@ public class AudioLoop extends EventDispatcher {
                 endPos = samplesPerBar - placeInBar;
                 _fillToSyncBoundary = false;
                 active = false;
+                _stateChangeHandler(0, pendingStateChange);
                 pendingStateChange = 0;
                 ending = true;
             }
@@ -321,15 +337,15 @@ public class AudioLoop extends EventDispatcher {
 
         // Fill buffer as normal
         var sampleIndex:int = 0;
-        var i:int = startPos;
+        var i:uint = startPos;
         //  processFilters();
-        var offset:int = readPosition + _loopStart;
-        for(i;i<endPos;i++) {
-            sampleIndex = (offset + i) % _loopLength;
+//        var offset:int = bufferReadPosition + _loopStart;
+        for(i;i<endPos;++i) {
+            sampleIndex = _loopStart + ((bufferReadPosition + i) % _loopLength);
             left[i] += leftChannel[sampleIndex];
             right[i] += rightChannel[sampleIndex];
         }
-        readPosition = (readPosition + sampleCount) % _loopLength;
+        bufferReadPosition = (bufferReadPosition + sampleCount) % _loopLength;
     }
 
     private function processFilters():void {
@@ -344,28 +360,31 @@ public class AudioLoop extends EventDispatcher {
     }
     // Position in milliseconds
     public function get position():Number {
-        return readPosition * inverseSampleRateKHz;
+        return bufferReadPosition * inverseSampleRateKHz;
     }
 
     public function jumpToStart():void {
-        readPosition = 0;
+        bufferReadPosition = 0;
     }
 
     /**
      * Sync the read position to the supplied position, wrapping as needed
-     * @param sampleReadPosition
+     * @param globalPositionInSamples
      */
-    public function start(sampleReadPosition:int, waitForQ:Boolean = false):void {
+    public function start(globalPositionInSamples:int, waitForQ:Boolean = false):void {
         if(_fillToSyncBoundary) {
             log.debug("Cancel stop");
             // Cancel the stop
             _fillToSyncBoundary = false;
         }
-        readPosition = sampleReadPosition % _loopLength;
-        log.debug("start. SRP : " + sampleReadPosition + ". RP: " + readPosition);
+        bufferReadPosition = globalPositionInSamples % _loopLength;
+        log.debug("start. SRP : " + globalPositionInSamples + ". RP: " + bufferReadPosition + " : " + waitForQ);
+        log.debug("start. Global Bar : " + (globalPositionInSamples * tempo.samplesPerBarInverse) + ". Local: " + (bufferReadPosition * tempo.samplesPerBarInverse) + " : " + waitForQ);
         waitForQuantizedSync = waitForQ;
         active = true;
-        pendingStateChange = waitForQuantizedSync ? STARTING : 0;
+        var newState:int = waitForQuantizedSync ? STARTING : 0;
+        _stateChangeHandler(newState, pendingStateChange);
+        pendingStateChange = newState;
     }
 
     public function stop():void {
@@ -373,10 +392,12 @@ public class AudioLoop extends EventDispatcher {
         if(waitForQuantizedSync) {
             // Previous start trigger should be cancelled
             waitForQuantizedSync = false;
+            _stateChangeHandler(0, pendingStateChange);
             pendingStateChange = 0;
             active = false;
         } else if(active) {
             _fillToSyncBoundary = true;
+            _stateChangeHandler(STOPPING, pendingStateChange);
             pendingStateChange = STOPPING;
         }
     }
@@ -394,11 +415,11 @@ public class AudioLoop extends EventDispatcher {
         }
     }
 
-    public function toggle(syncPos:int = 0):Boolean {
+    public function toggle(globalPositionInSamples:int = 0):Boolean {
         if(active) {
             if(pendingStateChange == AudioLoop.STOPPING) {
                 // Start, no need to sync
-                start(syncPos,false);
+                start(globalPositionInSamples,false);
                 return true;
             } else if(pendingStateChange == AudioLoop.STARTING) {
                 // Stop
@@ -410,7 +431,7 @@ public class AudioLoop extends EventDispatcher {
             }
         } else {
 //            trace("InActive Channel Switch. PSC : " + c.pendingStateChange);
-            start(syncPos, true);
+            start(globalPositionInSamples, true);
             return true;
         }
     }
@@ -423,5 +444,15 @@ public class AudioLoop extends EventDispatcher {
         gain = 1;
     }
 
+    public function set stateChangeHandler(stateChangeHandler:Function):void {
+        _stateChangeHandler = stateChangeHandler;
+    }
+
+    public function playNowWithThisLoopLength(len:Number, globalPositionInSamples:int):void {
+        log.debug("Play Now with loop length : " + len + " : " + globalPositionInSamples);
+        loopLength = len;
+        bufferReadPosition = globalPositionInSamples % _loopLength;
+        active = true;
+    }
 }
 }

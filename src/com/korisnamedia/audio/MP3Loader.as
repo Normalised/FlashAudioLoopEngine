@@ -43,8 +43,8 @@ public class MP3Loader extends EventDispatcher {
     public function MP3Loader(id:int, offset:int, tempo:Tempo) {
 
         super(this);
-        this.id = id;
         encoderOffset = offset;
+        this.id = id;
         this.tempo = tempo;
         sample = new AudioLoop(tempo);
     }

@@ -9,6 +9,7 @@ import flash.events.SampleDataEvent;
 import flash.events.TimerEvent;
 import flash.media.Sound;
 import flash.media.SoundChannel;
+import flash.utils.ByteArray;
 import flash.utils.Timer;
 import flash.utils.getTimer;
 
@@ -33,7 +34,7 @@ public class MixEngine extends EventDispatcher {
     public var lastUpdateTime:int;
 
 
-    public var position:int;
+    public var globalPositionInSamples:int;
 
     private var _tempo:Tempo;
     public static const PLAY_STATE:String = "PlayStateEvent";
@@ -72,8 +73,8 @@ public class MixEngine extends EventDispatcher {
     private function updateTime(event:TimerEvent):void {
         // How many samples since last update
         var dt:Number = (getTimer() - lastUpdateTime) * 44.1;
-        sequencePosition = (position + dt) * tempo.samplesPerBarInverse;
-        latencyAdjustSequencePosition = (position - latencyInSamples + dt) * tempo.samplesPerBarInverse;
+        sequencePosition = (globalPositionInSamples + dt) * tempo.samplesPerBarInverse;
+        latencyAdjustSequencePosition = (globalPositionInSamples - latencyInSamples + dt) * tempo.samplesPerBarInverse;
         if(stopFlag) {
             stop();
         }
@@ -97,7 +98,8 @@ public class MixEngine extends EventDispatcher {
         sequencePosition = -1;
         latencyAdjustSequencePosition = -1;
         // Start with negative position
-        position = -(tempo.samplesPerBar);
+        globalPositionInSamples = -(tempo.samplesPerBar);
+        log.debug("Engine Position " + globalPositionInSamples);
         go();
     }
 
@@ -106,13 +108,14 @@ public class MixEngine extends EventDispatcher {
         log.debug("Start mix engine with " + numChannels + " channels");
         playing = true;
         lastUpdateTime = getTimer();
-        position = 0;
+        globalPositionInSamples = 0;
         sequencePosition = 0;
         latencyAdjustSequencePosition = 0;
         go();
     }
 
     private function go():void {
+        log.debug("Mix Engine GO");
         stopFlag = false;
         updateTimer.start();
         soundChannel = out.play();
@@ -125,7 +128,7 @@ public class MixEngine extends EventDispatcher {
         playing = false;
 
         soundChannel.stop();
-        position = 0;
+        globalPositionInSamples = 0;
         for (var i:int = 0; i < channels.length; i++) {
             var loop:AudioLoop = channels[i];
             loop.jumpToStart();
@@ -139,54 +142,56 @@ public class MixEngine extends EventDispatcher {
         if(soundChannel) {
             latency = (event.position * inverseSampleRateKHz) - soundChannel.position;
         }
-        var bufferIndex:int = 0;
-        var bufferClearIndex:int = 0;
-        var channelIndex:int = 0;
+        var bufferIndex:uint = 0;
+        var bufferClearIndex:uint = 0;
+        var channelIndex:uint = 0;
+        var data:ByteArray = event.data;
+        var c:AudioLoop;
         var i:int = 0;
         if(preRolling) {
-            if(position + bufferSize > 0) {
+            log.debug("P:" + globalPositionInSamples);
+            if(globalPositionInSamples + bufferSize > 0) {
                 log.debug("Buffer fill crosses zero");
                 // Move buffer index to zero position point
-                var bufferOffset:int = Math.abs(position);
+                var bufferOffset:int = Math.abs(globalPositionInSamples);
                 // Mix samples into buffer
                 for (; channelIndex < numChannels; channelIndex++) {
 
-                    var c:AudioLoop = channels[channelIndex];
+                    c = channels[channelIndex];
                     if(c.active) {
                         c.writePartial(left, right, bufferOffset, bufferSize - bufferOffset);
-                        c.start(position + bufferSize, false);
+                        c.start(globalPositionInSamples + bufferSize, false);
                     }
                 }
                 // Write mixed audio into sample data byte array
-                for (; bufferIndex < bufferSize; bufferIndex++) {
-                    event.data.writeFloat(left[bufferIndex] * gain);
-                    event.data.writeFloat(right[bufferIndex] * gain);
+                for (; bufferIndex < bufferSize; ++bufferIndex) {
+                    data.writeFloat(left[bufferIndex] * gain);
+                    data.writeFloat(right[bufferIndex] * gain);
                 }
-                position += bufferSize;
+                globalPositionInSamples += bufferSize;
                 lastUpdateTime = getTimer();
                 preRolling = false;
                 playing = true;
-                log.debug("Switch to playing. Position : " + position);
+                log.debug("Switch to playing. Position : " + globalPositionInSamples);
                 return;
             } else {
                 // Write zeroes to the buffer until position hits zero
-                for (bufferIndex = 0; bufferIndex < bufferSize; bufferIndex++) {
-                    event.data.writeFloat(0);
-                    event.data.writeFloat(0);
+                for (bufferIndex = 0; bufferIndex < bufferSize; ++bufferIndex) {
+                    data.writeFloat(0);
+                    data.writeFloat(0);
                 }
-                position += bufferSize;
+                globalPositionInSamples += bufferSize;
                 lastUpdateTime = getTimer();
                 return;
             }
         }
         var t:int = getTimer();
         // Clear buffer
-        for (; bufferClearIndex < bufferSize; bufferClearIndex++) {
+        for (; bufferClearIndex < bufferSize; ++bufferClearIndex) {
             left[bufferClearIndex] = 0;
             right[bufferClearIndex] = 0;
         }
         // Mix samples into buffer
-        var c:AudioLoop;
         var ac:int = 0;
         var lastActive:AudioLoop;
         for (; channelIndex < numChannels; channelIndex++) {
@@ -199,11 +204,11 @@ public class MixEngine extends EventDispatcher {
         }
         var t1:int = getTimer();
         // Write mixed audio into sample data byte array
-        for (; bufferIndex < bufferSize; bufferIndex++) {
-            event.data.writeFloat(left[bufferIndex] * gain);
-            event.data.writeFloat(right[bufferIndex] * gain);
+        for (; bufferIndex < bufferSize; ++bufferIndex) {
+            data.writeFloat(left[bufferIndex] * gain);
+            data.writeFloat(right[bufferIndex] * gain);
         }
-        position += bufferSize;
+        globalPositionInSamples += bufferSize;
         lastUpdateTime = getTimer();
 
         mixTime = t1 - t;
@@ -228,7 +233,7 @@ public class MixEngine extends EventDispatcher {
         if(activeTrackCount == 1 && s.active) {
             log.debug("Turning off last track");
         }
-        return s.toggle(position);
+        return s.toggle(globalPositionInSamples);
     }
 
     public function get latencyInSamples():int {
@@ -255,6 +260,13 @@ public class MixEngine extends EventDispatcher {
     public function toggleMute():void {
         muted = !muted;
         gain = muted ? 0.0 : 1.0;
+    }
+
+    public function turnOffAllTracks():void {
+        for (var i:int = 0; i < channels.length; i++) {
+            var a:AudioLoop = channels[i];
+            a.active = false;
+        }
     }
 }
 }
